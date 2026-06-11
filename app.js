@@ -278,28 +278,32 @@ function saveSyncConfig(cfg) {
 async function syncPush() {
   const cfg = getSyncConfig();
   if (!cfg.token || !cfg.gistId) { alert("Configure d’abord ton token GitHub et l’ID du Gist."); return; }
+  if (!confirm("Envoyer vers le cloud va écraser la version cloud par tes données actuelles.\n\nSi l’autre appareil a des modifications non récupérées, elles seront perdues.\n\nContinuer ?")) return;
   const btn = document.getElementById("sync-push");
-  if (btn) btn.textContent = "Envoi…";
+  if (btn) btn.disabled = true, btn.textContent = "Envoi…";
   try {
+    const payload = { ...state, _syncedAt: new Date().toISOString() };
     const res = await fetch(`https://api.github.com/gists/${cfg.gistId}`, {
       method: "PATCH",
       headers: { "Authorization": `token ${cfg.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ files: { "roadtrip-sync.json": { content: JSON.stringify(state) } } })
+      body: JSON.stringify({ files: { "roadtrip-sync.json": { content: JSON.stringify(payload) } } })
     });
     if (!res.ok) throw new Error(res.status);
-    if (btn) btn.textContent = "Envoyé !";
-    setTimeout(() => { if (btn) btn.textContent = "Envoyer vers le cloud"; }, 2000);
+    saveSyncConfig({ ...cfg, lastPush: new Date().toISOString() });
+    if (btn) btn.textContent = "✓ Envoyé !";
+    setTimeout(() => { if (btn) btn.disabled = false, btn.textContent = "⬆ Envoyer vers le cloud"; renderExport(); }, 2500);
   } catch (e) {
     alert("Erreur d’envoi : " + e.message);
-    if (btn) btn.textContent = "Envoyer vers le cloud";
+    if (btn) btn.disabled = false, btn.textContent = "⬆ Envoyer vers le cloud";
   }
 }
 
 async function syncPull() {
   const cfg = getSyncConfig();
   if (!cfg.token || !cfg.gistId) { alert("Configure d’abord ton token GitHub et l’ID du Gist."); return; }
+  if (!confirm("Récupérer depuis le cloud va remplacer TOUTES tes données locales par la version cloud.\n\nTes modifications non envoyées seront définitivement perdues.\n\nContinuer ?")) return;
   const btn = document.getElementById("sync-pull");
-  if (btn) btn.textContent = "Récupération…";
+  if (btn) btn.disabled = true, btn.textContent = "Récupération…";
   try {
     const res = await fetch(`https://api.github.com/gists/${cfg.gistId}`, {
       headers: { "Authorization": `token ${cfg.token}` }
@@ -308,57 +312,61 @@ async function syncPull() {
     const json = await res.json();
     const content = json.files["roadtrip-sync.json"]?.content;
     if (!content) throw new Error("Fichier introuvable dans le Gist");
-    state = { ...defaultState(), ...JSON.parse(content) };
+    const parsed = JSON.parse(content);
+    const syncedAt = parsed._syncedAt ? new Date(parsed._syncedAt).toLocaleString("fr-FR") : "inconnue";
+    delete parsed._syncedAt;
+    state = { ...defaultState(), ...parsed };
     saveState();
-    if (btn) btn.textContent = "Récupéré !";
-    setTimeout(() => { if (btn) btn.textContent = "Récupérer depuis le cloud"; }, 2000);
+    saveSyncConfig({ ...cfg, lastPull: new Date().toISOString(), lastCloudDate: syncedAt });
+    renderCurrent();
+    if (btn) btn.textContent = "✓ Récupéré !";
+    setTimeout(() => { if (btn) btn.disabled = false, btn.textContent = "⬇ Récupérer depuis le cloud"; renderExport(); }, 2500);
   } catch (e) {
     alert("Erreur de récupération : " + e.message);
-    if (btn) btn.textContent = "Récupérer depuis le cloud";
+    if (btn) btn.disabled = false, btn.textContent = "⬇ Récupérer depuis le cloud";
   }
 }
 
 function renderExport() {
   const cfg = getSyncConfig();
+  const lastPush = cfg.lastPush ? new Date(cfg.lastPush).toLocaleString("fr-FR") : null;
+  const lastPull = cfg.lastPull ? new Date(cfg.lastPull).toLocaleString("fr-FR") : null;
   const root = document.getElementById("export-content");
   root.innerHTML = `
     <div class="panel">
-      <h2>Sauvegarde locale</h2>
-      <p>Les données sont stockées dans le navigateur. Pour ne rien perdre, exporte régulièrement un fichier JSON.</p>
-      <div class="actions">
-        <button onclick="exportData()">Exporter mes données</button>
-        <label class="import-label">Importer des données<input id="import-json" type="file" accept="application/json"></label>
-        <button class="secondary" onclick="resetAll()">Réinitialiser</button>
-      </div>
-    </div>
+      <h2>Synchronisation cloud</h2>
+      <p>Tes données sont <strong>sauvegardées automatiquement sur cet appareil</strong> à chaque modification — tu ne peux pas les perdre par accident en naviguant.</p>
+      <p>La synchronisation cloud sert uniquement à <strong>partager entre le PC et le téléphone</strong>. Elle est manuelle : c’est toi qui décides quand envoyer ou récupérer.</p>
 
-    <div class="panel">
-      <h2>Synchronisation cloud (GitHub Gist)</h2>
-      <p>Partage tes données entre PC et téléphone via ton compte GitHub — gratuit, aucune vérification supplémentaire.</p>
-      <div class="edit-grid">
-        <label>Token GitHub<input id="cfg-token" type="password" placeholder="ghp_xxxxxxxxxxxx" value="${esc(cfg.token || "")}"></label>
-        <label>ID du Gist<input id="cfg-gistid" placeholder="a1b2c3d4e5f6..." value="${esc(cfg.gistId || "")}"></label>
+      <div style="background:var(--bg2,#f5f5f5);border-radius:8px;padding:1rem;margin:1rem 0">
+        <strong>⬆ Envoyer vers le cloud</strong> — envoie tes données locales vers le cloud.<br>
+        <span class="muted">⚠ Écrase ce qui était dans le cloud. À faire quand TU viens de modifier des choses.</span>
+        ${lastPush ? `<br><span class="muted">Dernier envoi : ${lastPush}</span>` : ""}
+        <br><br>
+        <strong>⬇ Récupérer depuis le cloud</strong> — remplace tes données locales par celles du cloud.<br>
+        <span class="muted">⚠ Écrase tes données locales. À faire quand L’AUTRE appareil vient d’envoyer.</span>
+        ${lastPull ? `<br><span class="muted">Dernière récupération : ${lastPull}</span>` : ""}
       </div>
-      <div class="actions" style="margin-top:0.75rem">
-        <button class="secondary" onclick="saveCloudConfig()">Enregistrer la config</button>
-        <button id="sync-push" onclick="syncPush()">Envoyer vers le cloud</button>
-        <button id="sync-pull" onclick="syncPull()">Récupérer depuis le cloud</button>
+
+      <div class="actions">
+        <button id="sync-push" onclick="syncPush()">⬆ Envoyer vers le cloud</button>
+        <button id="sync-pull" onclick="syncPull()">⬇ Récupérer depuis le cloud</button>
       </div>
-      <details style="margin-top:1rem">
-        <summary>Comment configurer ? (2 minutes, tu as déjà GitHub)</summary>
-        <ol>
-          <li>Sur <strong>github.com</strong> → ta photo en haut à droite → <strong>Settings</strong>.</li>
-          <li>Tout en bas à gauche : <strong>Developer settings</strong> → <strong>Personal access tokens</strong> → <strong>Tokens (classic)</strong>.</li>
-          <li>Clique <strong>Generate new token (classic)</strong>, donne un nom (ex: roadtrip), coche uniquement <strong>gist</strong>, génère et copie le token.</li>
-          <li>Va sur <strong>gist.github.com</strong>, crée un Gist : nom de fichier <code>roadtrip-sync.json</code>, contenu <code>{}</code>, clique <strong>Create secret gist</strong>.</li>
-          <li>Copie l’ID dans l’URL (la partie après ton pseudo, ex: <code>a1b2c3d4e5f6</code>).</li>
-          <li>Colle le token et l’ID ci-dessus, clique Enregistrer.</li>
-        </ol>
+
+      <details style="margin-top:1.5rem">
+        <summary>Paramètres avancés (token GitHub)</summary>
+        <div class="edit-grid" style="margin-top:0.75rem">
+          <label>Token GitHub<input id="cfg-token" type="password" placeholder="ghp_xxxxxxxxxxxx" value="${esc(cfg.token || "")}"></label>
+          <label>ID du Gist<input id="cfg-gistid" placeholder="a1b2c3d4e5f6..." value="${esc(cfg.gistId || "")}"></label>
+        </div>
+        <div class="actions" style="margin-top:0.5rem">
+          <button class="secondary" onclick="saveCloudConfig()">Enregistrer</button>
+        </div>
       </details>
     </div>
 
     <div class="panel">
-      <h3>Installation iPhone</h3>
+      <h3>Installation sur téléphone (iPhone)</h3>
       <ol>
         <li>Ouvrir l’adresse du site dans Safari.</li>
         <li>Toucher le bouton Partager.</li>
@@ -367,9 +375,6 @@ function renderExport() {
       </ol>
     </div>
   `;
-  document.getElementById("import-json").addEventListener("change", e => {
-    if (e.target.files[0]) importData(e.target.files[0]);
-  });
 }
 
 function saveCloudConfig() {
